@@ -2,7 +2,12 @@
 import logging
 import re
 
-from bimmer_connected.const import SERVICE_ALL_TRIPS, SERVICE_LAST_TRIP, SERVICE_STATUS
+from bimmer_connected.const import (
+    SERVICE_ALL_TRIPS,
+    SERVICE_CHARGING_PROFILE,
+    SERVICE_LAST_TRIP,
+    SERVICE_STATUS,
+)
 from bimmer_connected.state import ChargingState
 
 from homeassistant.const import (
@@ -314,6 +319,19 @@ ATTR_TO_HA_GENERIC = {
     "reset_date": ["mdi:calendar-blank", None, False],
     "saved_co2": ["mdi:tree-outline", MASS_KILOGRAMS, False],
     "saved_co2_green_energy": ["mdi:tree-outline", MASS_KILOGRAMS, False],
+    # ChargingProfile attributes
+    "is_pre_entry_climatization_enabled": ["mdi:snowflake", None, True],
+    "preferred_charging_window_start_time": ["mdi:dock-window", None, False],
+    "preferred_charging_window_end_time": ["mdi:dock-window", None, False],
+    "pre_entry_climatization_timer_1_timer_enabled": ["mdi:av-timer", None, False],
+    "pre_entry_climatization_timer_1_departure_time": ["mdi:av-timer", None, False],
+    "pre_entry_climatization_timer_1_weekdays": ["mdi:av-timer", None, False],
+    "pre_entry_climatization_timer_2_timer_enabled": ["mdi:av-timer", None, False],
+    "pre_entry_climatization_timer_2_departure_time": ["mdi:av-timer", None, False],
+    "pre_entry_climatization_timer_2_weekdays": ["mdi:av-timer", None, False],
+    "pre_entry_climatization_timer_3_timer_enabled": ["mdi:av-timer", None, False],
+    "pre_entry_climatization_timer_3_departure_time": ["mdi:av-timer", None, False],
+    "pre_entry_climatization_timer_3_weekdays": ["mdi:av-timer", None, False],
 }
 
 ATTR_TO_HA_METRIC.update(ATTR_TO_HA_GENERIC)
@@ -384,6 +402,36 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                                     account,
                                     vehicle,
                                     f"{attribute_name}_{attr}",
+                                    attribute_info,
+                                    service,
+                                )
+                                entities.append(device)
+                    else:
+                        device = BMWConnectedDriveSensor(
+                            account, vehicle, attribute_name, attribute_info, service
+                        )
+                        entities.append(device)
+            if service == SERVICE_CHARGING_PROFILE:
+                for (
+                    attribute_name
+                ) in vehicle.state.charging_profile.available_attributes:
+                    if attribute_name == "preferred_charging_window":
+                        for attr in ["start_time", "end_time"]:
+                            device = BMWConnectedDriveSensor(
+                                account,
+                                vehicle,
+                                f"{attribute_name}_{attr}",
+                                attribute_info,
+                                service,
+                            )
+                            entities.append(device)
+                    elif attribute_name == "pre_entry_climatization_timer":
+                        for timer in range(1, 4):
+                            for attr in ["timer_enabled", "departure_time", "weekdays"]:
+                                device = BMWConnectedDriveSensor(
+                                    account,
+                                    vehicle,
+                                    f"{attribute_name}_{timer}_{attr}",
                                     attribute_info,
                                     service,
                                 )
@@ -471,6 +519,7 @@ class BMWConnectedDriveSensor(BMWConnectedDriveBaseEntity, Entity):
         vehicle_state = self._vehicle.state
         vehicle_last_trip = self._vehicle.state.last_trip
         vehicle_all_trips = self._vehicle.state.all_trips
+        vehicle_charging_profile = self._vehicle.state.charging_profile
         if self._attribute == "charging_status":
             self._state = getattr(vehicle_state, self._attribute).value
         elif self.unit_of_measurement == VOLUME_GALLONS:
@@ -500,3 +549,23 @@ class BMWConnectedDriveSensor(BMWConnectedDriveBaseEntity, Entity):
                     self._state = getattr(attr, sub_attr)
                     return
             self._state = getattr(vehicle_all_trips, self._attribute)
+        elif self._service == SERVICE_CHARGING_PROFILE:
+            for attribute in ["preferred_charging_window"]:
+                match = re.search(f"({attribute})_(.+)", self._attribute)
+                if match:
+                    attr = getattr(vehicle_charging_profile, match.group(1))
+                    sub_attr = match.group(2)
+                    self._state = getattr(attr, sub_attr)
+                    return
+            for attribute in ["pre_entry_climatization_timer"]:
+                match = re.search(fr"({attribute})_(\d)_(.+)", self._attribute)
+                if match:
+                    attr = getattr(vehicle_charging_profile, match.group(1))
+                    timer_id = f"timer{match.group(2)}"
+                    sub_attr = match.group(3)
+                    for timer in attr:
+                        if timer.value == timer_id:
+                            self._state = getattr(attr[timer], sub_attr)
+                            return
+                    return
+            self._state = getattr(vehicle_charging_profile, self._attribute)
