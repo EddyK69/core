@@ -1,19 +1,21 @@
 """Helper methods to handle the time in Home Assistant."""
 from __future__ import annotations
 
+import bisect
 from contextlib import suppress
 import datetime as dt
 import re
-from typing import Any
-
-try:
-    import zoneinfo
-except ImportError:
-    from backports import zoneinfo
+import sys
+from typing import Any, cast
 
 import ciso8601
 
 from homeassistant.const import MATCH_ALL
+
+if sys.version_info[:2] >= (3, 9):
+    import zoneinfo  # pylint: disable=import-error
+else:
+    from backports import zoneinfo  # pylint: disable=import-error
 
 DATE_STR_FORMAT = "%Y-%m-%d"
 UTC = dt.timezone.utc
@@ -48,7 +50,8 @@ def get_time_zone(time_zone_str: str) -> dt.tzinfo | None:
     Async friendly.
     """
     try:
-        return zoneinfo.ZoneInfo(time_zone_str)  # type: ignore
+        # Cast can be removed when mypy is switched to Python 3.9.
+        return cast(dt.tzinfo, zoneinfo.ZoneInfo(time_zone_str))
     except zoneinfo.ZoneInfoNotFoundError:
         return None
 
@@ -76,10 +79,11 @@ def as_utc(dattim: dt.datetime) -> dt.datetime:
     return dattim.astimezone(UTC)
 
 
-def as_timestamp(dt_value: dt.datetime) -> float:
+def as_timestamp(dt_value: dt.datetime | str) -> float:
     """Convert a date/time into a unix time (seconds since 1970)."""
-    if hasattr(dt_value, "timestamp"):
-        parsed_dt: dt.datetime | None = dt_value
+    parsed_dt: dt.datetime | None
+    if isinstance(dt_value, dt.datetime):
+        parsed_dt = dt_value
     else:
         parsed_dt = parse_datetime(str(dt_value))
     if parsed_dt is None:
@@ -265,15 +269,7 @@ def find_next_time_expression_time(
 
         Return None if no such value exists.
         """
-        left = 0
-        right = len(arr)
-        while left < right:
-            mid = (left + right) // 2
-            if arr[mid] < cmp:
-                left = mid + 1
-            else:
-                right = mid
-
+        left = bisect.bisect_left(arr, cmp)
         if left == len(arr):
             return None
         return arr[left]
